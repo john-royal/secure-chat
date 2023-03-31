@@ -350,7 +350,7 @@ int main(int argc, char *argv[])
 		{0,0,0,0}
 	};
 	// process options:
-	char c;
+	int c;
 	int opt_index = 0;
 	int port = 1337;
 	char hostname[HOST_NAME_MAX+1] = "localhost";
