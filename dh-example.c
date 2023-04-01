@@ -7,27 +7,27 @@ int main()
 {
 	/* NOTE: if for some reason you wanted to make new DH parameters,
 	 * you would call initFromScratch(...) here instead */
-	if (init("params") == 0)
+	if (dh_load_params_from_file("params") == 0)
 	{
 		gmp_printf("Successfully read DH params:\nq = %Zd\np = %Zd\ng = %Zd\n", q, p, g);
 	}
 	/* Alice: */
 	NEWZ(a); /* secret key (a random exponent) */
 	NEWZ(A); /* public key: A = g^a mod p */
-	dhGen(a, A);
+	dh_generate_key_pair(a, A);
 	/* Bob: */
 	NEWZ(b); /* secret key (a random exponent) */
 	NEWZ(B); /* public key: B = g^b mod p */
-	dhGen(b, B);
+	dh_generate_key_pair(b, B);
 
 	// const size_t klen = 32;
 	const size_t klen = 128;
 	/* Alice's key derivation: */
 	unsigned char kA[klen];
-	dhFinal(a, A, B, kA, klen);
+	dh_compute_shared_secret(a, A, B, kA, klen);
 	/* Bob's key derivation: */
 	unsigned char kB[klen];
-	dhFinal(b, B, A, kB, klen);
+	dh_compute_shared_secret(b, B, A, kB, klen);
 
 	/* make sure they are the same: */
 	if (memcmp(kA, kB, klen) == 0)

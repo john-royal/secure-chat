@@ -22,11 +22,11 @@ using std::deque;
 using std::pair;
 #include "dh.h"
 
-static pthread_t trecv;		/* wait for incoming messagess and post to queue */
-void *recvMsg(void *);		/* for trecv */
-static pthread_t tcurses;	/* setup curses and draw messages from queue */
-void *cursesthread(void *); /* for tcurses */
-/* tcurses will get a queue full of these and redraw the appropriate windows */
+static pthread_t thread_receive_message; /* wait for incoming messagess and post to queue */
+void *receive_message(void *);			 /* for thread_receive_message */
+static pthread_t thread_curses;			 /* setup curses and draw messages from queue */
+void *curses_thread_manager(void *);	 /* for thread_curses */
+/* thread_curses will get a queue full of these and redraw the appropriate windows */
 struct redraw_data
 {
 	bool resize;
@@ -34,10 +34,10 @@ struct redraw_data
 	string sender;
 	WINDOW *win;
 };
-static deque<redraw_data> mq; /* messages and resizes yet to be drawn */
+static deque<redraw_data> message_queue; /* messages and resizes yet to be drawn */
 /* manage access to message queue: */
-static pthread_mutex_t qmx = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t qcv = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t message_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t message_queue_cond = PTHREAD_COND_INITIALIZER;
 
 /* XXX different colors for different senders */
 
@@ -51,51 +51,51 @@ static deque<string> transcript;
 
 /* network stuff... */
 
-int listensock, sockfd;
+int listen_socket, socket_fd;
 
 [[noreturn]] static void fail_exit(const char *msg);
 
-[[noreturn]] static void error(const char *msg)
+[[noreturn]] static void perror_fail_exit(const char *msg)
 {
 	perror(msg);
 	fail_exit("");
 }
 
-int initServerNet(int port)
+int init_server_network(int port)
 {
 	int reuse = 1;
 	struct sockaddr_in serv_addr;
-	listensock = socket(AF_INET, SOCK_STREAM, 0);
-	setsockopt(listensock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+	listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+	setsockopt(listen_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 	/* NOTE: might not need the above if you make sure the client closes first */
-	if (listensock < 0)
-		error("ERROR opening socket");
+	if (listen_socket < 0)
+		perror_fail_exit("ERROR opening socket");
 	bzero((char *)&serv_addr, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = INADDR_ANY;
 	serv_addr.sin_port = htons(port);
-	if (bind(listensock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-		error("ERROR on binding");
+	if (bind(listen_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+		perror_fail_exit("ERROR on binding");
 	fprintf(stderr, "listening on port %i...\n", port);
-	listen(listensock, 1);
+	listen(listen_socket, 1);
 	socklen_t clilen;
 	struct sockaddr_in cli_addr;
-	sockfd = accept(listensock, (struct sockaddr *)&cli_addr, &clilen);
-	if (sockfd < 0)
-		error("error on accept");
-	close(listensock);
+	socket_fd = accept(listen_socket, (struct sockaddr *)&cli_addr, &clilen);
+	if (socket_fd < 0)
+		perror_fail_exit("error on accept");
+	close(listen_socket);
 	fprintf(stderr, "connection made, starting session...\n");
-	/* at this point, should be able to send/recv on sockfd */
+	/* at this point, should be able to send/recv on socket_fd */
 	return 0;
 }
 
-static int initClientNet(char *hostname, int port)
+static int init_client_network(char *hostname, int port)
 {
 	struct sockaddr_in serv_addr;
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 	struct hostent *server;
-	if (sockfd < 0)
-		error("ERROR opening socket");
+	if (socket_fd < 0)
+		perror_fail_exit("ERROR opening socket");
 	server = gethostbyname(hostname);
 	if (server == NULL)
 	{
@@ -106,22 +106,22 @@ static int initClientNet(char *hostname, int port)
 	serv_addr.sin_family = AF_INET;
 	memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 	serv_addr.sin_port = htons(port);
-	if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-		error("ERROR connecting");
-	/* at this point, should be able to send/recv on sockfd */
+	if (connect(socket_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+		perror_fail_exit("ERROR connecting");
+	/* at this point, should be able to send/recv on socket_fd */
 	return 0;
 }
 
-static int shutdownNetwork()
+static int shutdown_network()
 {
-	shutdown(sockfd, 2);
+	shutdown(socket_fd, 2);
 	unsigned char dummy[64];
 	ssize_t r;
 	do
 	{
-		r = recv(sockfd, dummy, 64, 0);
+		r = recv(socket_fd, dummy, 64, 0);
 	} while (r != 0 && r != -1);
-	close(sockfd);
+	close(socket_fd);
 	return 0;
 }
 
@@ -164,7 +164,7 @@ static int readline_getc(FILE *dummy)
 
 /* if batch is set, don't draw immediately to real screen (use wnoutrefresh
  * instead of wrefresh) */
-static void msg_win_redisplay(bool batch, const string &newmsg = "", const string &sender = "")
+static void redisplay_message_window(bool batch, const string &newmsg = "", const string &sender = "")
 {
 	if (batch)
 		wnoutrefresh(msg_win);
@@ -178,7 +178,7 @@ static void msg_win_redisplay(bool batch, const string &newmsg = "", const strin
 	}
 }
 
-static void msg_typed(char *line)
+static void readline_message_input_handler(char *line)
 {
 	string mymsg;
 	if (!line)
@@ -196,19 +196,19 @@ static void msg_typed(char *line)
 			mymsg = string(line);
 			transcript.push_back("me: " + mymsg);
 			ssize_t nbytes;
-			if ((nbytes = send(sockfd, line, mymsg.length(), 0)) == -1)
-				error("send failed");
+			if ((nbytes = send(socket_fd, line, mymsg.length(), 0)) == -1)
+				perror_fail_exit("send failed");
 		}
-		pthread_mutex_lock(&qmx);
-		mq.push_back({false, mymsg, "me", msg_win});
-		pthread_cond_signal(&qcv);
-		pthread_mutex_unlock(&qmx);
+		pthread_mutex_lock(&message_queue_mutex);
+		message_queue.push_back({false, mymsg, "me", msg_win});
+		pthread_cond_signal(&message_queue_cond);
+		pthread_mutex_unlock(&message_queue_mutex);
 	}
 }
 
 /* if batch is set, don't draw immediately to real screen (use wnoutrefresh
  * instead of wrefresh) */
-static void cmd_win_redisplay(bool batch)
+static void redisplay_command_window(bool batch)
 {
 	int prompt_width = strnlen(rl_display_prompt, 128);
 	int cursor_col = prompt_width + strnlen(rl_line_buffer, rl_point);
@@ -235,13 +235,13 @@ static void cmd_win_redisplay(bool batch)
 
 static void readline_redisplay(void)
 {
-	pthread_mutex_lock(&qmx);
-	mq.push_back({false, "", "", cmd_win});
-	pthread_cond_signal(&qcv);
-	pthread_mutex_unlock(&qmx);
+	pthread_mutex_lock(&message_queue_mutex);
+	message_queue.push_back({false, "", "", cmd_win});
+	pthread_cond_signal(&message_queue_cond);
+	pthread_mutex_unlock(&message_queue_mutex);
 }
 
-static void resize(void)
+static void handle_window_resize(void)
 {
 	if (LINES >= 3)
 	{
@@ -254,9 +254,9 @@ static void resize(void)
 	}
 
 	/* Batch refreshes and commit them with doupdate() */
-	msg_win_redisplay(true);
+	redisplay_message_window(true);
 	wnoutrefresh(sep_win);
-	cmd_win_redisplay(true);
+	redisplay_command_window(true);
 	doupdate();
 }
 
@@ -339,7 +339,7 @@ static void init_readline(void)
 	rl_getc_function = readline_getc;
 	rl_redisplay_function = readline_redisplay;
 
-	rl_callback_handler_install("> ", msg_typed);
+	rl_callback_handler_install("> ", readline_message_input_handler);
 }
 
 static void deinit_readline(void)
@@ -396,23 +396,23 @@ int main(int argc, char *argv[])
 	}
 	if (isclient)
 	{
-		initClientNet(hostname, port);
+		init_client_network(hostname, port);
 	}
 	else
 	{
-		initServerNet(port);
+		init_server_network(port);
 	}
 
-	/* NOTE: these don't work if called from cursesthread */
+	/* NOTE: these don't work if called from curses_thread_manager */
 	init_ncurses();
 	init_readline();
 	/* start curses thread */
-	if (pthread_create(&tcurses, 0, cursesthread, 0))
+	if (pthread_create(&thread_curses, 0, curses_thread_manager, 0))
 	{
 		fprintf(stderr, "Failed to create curses thread.\n");
 	}
 	/* start receiver thread: */
-	if (pthread_create(&trecv, 0, recvMsg, 0))
+	if (pthread_create(&thread_receive_message, 0, receive_message, 0))
 	{
 		fprintf(stderr, "Failed to create update thread.\n");
 	}
@@ -425,17 +425,17 @@ int main(int argc, char *argv[])
 		switch (c)
 		{
 		case KEY_RESIZE:
-			pthread_mutex_lock(&qmx);
-			mq.push_back(rd);
-			pthread_cond_signal(&qcv);
-			pthread_mutex_unlock(&qmx);
+			pthread_mutex_lock(&message_queue_mutex);
+			message_queue.push_back(rd);
+			pthread_cond_signal(&message_queue_cond);
+			pthread_mutex_unlock(&message_queue_mutex);
 			break;
 			// Ctrl-L -- redraw screen
 		// case '\f':
 		// 	// Makes the next refresh repaint the screen from scratch
 		// 	/* XXX this needs to be done in the curses thread as well. */
 		// 	clearok(curscr,true);
-		// 	resize();
+		// 	handle_window_resize();
 		// 	break;
 		default:
 			input = c;
@@ -443,7 +443,7 @@ int main(int argc, char *argv[])
 		}
 	} while (!should_exit);
 
-	shutdownNetwork();
+	shutdown_network();
 	deinit_ncurses();
 	deinit_readline();
 	return 0;
@@ -457,17 +457,17 @@ int main(int argc, char *argv[])
 /* We'll need yet another thread to listen for incoming messages and
  * post them to the queue. */
 
-void *cursesthread(void *pData)
+void *curses_thread_manager(void *pData)
 {
 	/* NOTE: these calls only worked from the main thread... */
 	// init_ncurses();
 	// init_readline();
 	while (true)
 	{
-		pthread_mutex_lock(&qmx);
-		while (mq.empty())
+		pthread_mutex_lock(&message_queue_mutex);
+		while (message_queue.empty())
 		{
-			pthread_cond_wait(&qcv, &qmx);
+			pthread_cond_wait(&message_queue_cond, &message_queue_mutex);
 			/* NOTE: pthread_cond_wait will release the mutex and block, then
 			 * reaquire it before returning.  Given that only one thread (this
 			 * one) consumes elements of the queue, we probably don't have to
@@ -476,40 +476,40 @@ void *cursesthread(void *pData)
 		}
 		/* at this point, we have control of the queue, which is not empty,
 		 * so write all the messages and then let go of the mutex. */
-		while (!mq.empty())
+		while (!message_queue.empty())
 		{
-			redraw_data m = mq.front();
-			mq.pop_front();
+			redraw_data m = message_queue.front();
+			message_queue.pop_front();
 			if (m.win == cmd_win)
 			{
-				cmd_win_redisplay(m.resize);
+				redisplay_command_window(m.resize);
 			}
 			else if (m.resize)
 			{
-				resize();
+				handle_window_resize();
 			}
 			else
 			{
-				msg_win_redisplay(false, m.msg, m.sender);
+				redisplay_message_window(false, m.msg, m.sender);
 				/* Redraw input window to "focus" it (otherwise the cursor
 				 * will appear in the transcript which is confusing). */
-				cmd_win_redisplay(false);
+				redisplay_command_window(false);
 			}
 		}
-		pthread_mutex_unlock(&qmx);
+		pthread_mutex_unlock(&message_queue_mutex);
 	}
 	return 0;
 }
 
-void *recvMsg(void *)
+void *receive_message(void *)
 {
 	size_t maxlen = 256;
 	char msg[maxlen + 1];
 	ssize_t nbytes;
 	while (1)
 	{
-		if ((nbytes = recv(sockfd, msg, maxlen, 0)) == -1)
-			error("recv failed");
+		if ((nbytes = recv(socket_fd, msg, maxlen, 0)) == -1)
+			perror_fail_exit("recv failed");
 		msg[nbytes] = 0; /* make sure it is null-terminated */
 		if (nbytes == 0)
 		{
@@ -517,10 +517,10 @@ void *recvMsg(void *)
 			should_exit = true;
 			return 0;
 		}
-		pthread_mutex_lock(&qmx);
-		mq.push_back({false, msg, "Mr Thread", msg_win});
-		pthread_cond_signal(&qcv);
-		pthread_mutex_unlock(&qmx);
+		pthread_mutex_lock(&message_queue_mutex);
+		message_queue.push_back({false, msg, "Mr Thread", msg_win});
+		pthread_cond_signal(&message_queue_cond);
+		pthread_mutex_unlock(&message_queue_mutex);
 	}
 	return 0;
 }

@@ -14,20 +14,20 @@ mpz_t q; /* "small" prime; should be 256 bits or more */
 mpz_t p; /* "large" prime; should be 2048 bits or more, with q|(p-1) */
 mpz_t g; /* generator of the subgroup of order q */
 /* length of q and p in bits and bytes (for convenience) */
-size_t qBitlen;
-size_t pBitlen;
-size_t qLen; /* length of q in bytes */
-size_t pLen; /* length of p in bytes */
+size_t q_bit_length;
+size_t p_bit_length;
+size_t q_length; /* length of q in bytes */
+size_t p_length; /* length of p in bytes */
 
 /* NOTE: this constant is arbitrary and does not need to be secret. */
 const char *hmacsalt = "z3Dow}^Z]8Uu5>pr#;{QUs!133";
 
-int init(const char *fname)
+int dh_load_params_from_file(const char *filename)
 {
 	mpz_init(q);
 	mpz_init(p);
 	mpz_init(g);
-	FILE *f = fopen(fname, "rb");
+	FILE *f = fopen(filename, "rb");
 	if (!f)
 	{
 		fprintf(stderr, "Could not open file 'params'\n");
@@ -77,25 +77,25 @@ int init(const char *fname)
 		printf("g does not generate subroup of order q!\n");
 		return -1;
 	}
-	qBitlen = mpz_sizeinbase(q, 2);
-	pBitlen = mpz_sizeinbase(p, 2);
-	qLen = qBitlen / 8 + (qBitlen % 8 != 0);
-	pLen = pBitlen / 8 + (pBitlen % 8 != 0);
+	q_bit_length = mpz_sizeinbase(q, 2);
+	p_bit_length = mpz_sizeinbase(p, 2);
+	q_length = q_bit_length / 8 + (q_bit_length % 8 != 0);
+	p_length = p_bit_length / 8 + (p_bit_length % 8 != 0);
 	return 0;
 }
 
-int initFromScratch(size_t qbits, size_t pbits)
+int dh_generate_new_params(size_t qbits, size_t pbits)
 {
 	/* select random prime q of the right number of bits, then multiply
 	 * by a random even integer, add 1, check if that is prime.  If so,
 	 * we've found q and p respectively. */
 	/* lengths in BYTES: */
-	qBitlen = qbits;
-	pBitlen = pbits;
-	qLen = qBitlen / 8 + (qBitlen % 8 != 0);
-	pLen = pBitlen / 8 + (pBitlen % 8 != 0);
-	size_t rLen = pLen - qLen;
-	unsigned char *qCand = malloc(qLen);
+	q_bit_length = qbits;
+	p_bit_length = pbits;
+	q_length = q_bit_length / 8 + (q_bit_length % 8 != 0);
+	p_length = p_bit_length / 8 + (p_bit_length % 8 != 0);
+	size_t rLen = p_length - q_length;
+	unsigned char *qCand = malloc(q_length);
 	unsigned char *rCand = malloc(rLen);
 	mpz_init(q);
 	mpz_init(p);
@@ -107,8 +107,8 @@ int initFromScratch(size_t qbits, size_t pbits)
 	{
 		do
 		{
-			fread(qCand, 1, qLen, f);
-			BYTES2Z(q, qCand, qLen);
+			fread(qCand, 1, q_length, f);
+			BYTES2Z(q, qCand, q_length);
 		} while (!ISPRIME(q));
 		/* now try to get p */
 		fread(rCand, 1, rLen, f);
@@ -126,7 +126,7 @@ int initFromScratch(size_t qbits, size_t pbits)
 	gmp_printf("q = %Zd\np = %Zd\n", q, p);
 	/* now find a generator of the subgroup of order q.
 	 * Turns out just about anything to the r power will work: */
-	size_t tLen = qLen; /* qLen somewhat arbitrary. */
+	size_t tLen = q_length; /* q_length somewhat arbitrary. */
 	unsigned char *tCand = malloc(tLen);
 	do
 	{
@@ -144,8 +144,8 @@ int initFromScratch(size_t qbits, size_t pbits)
 }
 
 /* choose random exponent sk and compute g^(sk) mod p.
- * NOTE: init or initFromScratch must have been called first. */
-int dhGen(mpz_t sk, mpz_t pk)
+ * NOTE: dh_load_params_from_file or dh_generate_new_params must have been called first. */
+int dh_generate_key_pair(mpz_t sk, mpz_t pk)
 {
 	FILE *f = fopen("/dev/urandom", "rb");
 	if (!f)
@@ -153,7 +153,7 @@ int dhGen(mpz_t sk, mpz_t pk)
 		fprintf(stderr, "Failed to open /dev/urandom\n");
 		return -1;
 	}
-	size_t buflen = qLen + 32; /* read extra to get closer to uniform distribution */
+	size_t buflen = q_length + 32; /* read extra to get closer to uniform distribution */
 	unsigned char *buf = malloc(buflen);
 	fread(buf, 1, buflen, f);
 	fclose(f);
@@ -166,14 +166,14 @@ int dhGen(mpz_t sk, mpz_t pk)
 
 /* see "Cryptographic Extraction and Key Derivation: The HKDF Scheme"
  * by H. Krawczyk, 2010 for details on the key derivation used here. */
-int dhFinal(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf, size_t buflen)
+int dh_compute_shared_secret(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf, size_t buflen)
 {
 	NEWZ(x);
 	mpz_powm(x, pk_yours, sk_mine, p);
 	/* now apply key derivation to get the desired number of bytes: */
 	/* we use the diffie hellman value as the key, and the  */
-	unsigned char *SK = malloc(pLen);
-	memset(SK, 0, pLen);
+	unsigned char *SK = malloc(p_length);
+	memset(SK, 0, p_length);
 	size_t nWritten; /* saves number of bytes written by Z2BYTES */
 	Z2BYTES(SK, nWritten, x);
 	const size_t maclen = 64; /* output len of sha512 */
@@ -191,7 +191,7 @@ int dhFinal(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf,
 	 *  CTX == | K(i) | PK_A | PK_B | i |
 	 *         +------------------------+
 	 * */
-	const size_t ctxlen = maclen + 2 * pLen + 8;
+	const size_t ctxlen = maclen + 2 * p_length + 8;
 	/* NOTE: the extra 8 bytes are to concatenate the key chunk index */
 	unsigned char *CTX = malloc(ctxlen);
 	uint64_t index = 0;		  /* key index */
@@ -200,14 +200,14 @@ int dhFinal(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf,
 	if (mpz_cmp(pk_mine, pk_yours) < 0)
 	{
 		Z2BYTES(CTX + maclen, nWritten, pk_mine);
-		Z2BYTES(CTX + maclen + pLen, nWritten, pk_yours);
+		Z2BYTES(CTX + maclen + p_length, nWritten, pk_yours);
 	}
 	else
 	{
 		Z2BYTES(CTX + maclen, nWritten, pk_yours);
-		Z2BYTES(CTX + maclen + pLen, nWritten, pk_mine);
+		Z2BYTES(CTX + maclen + p_length, nWritten, pk_mine);
 	}
-	memcpy(CTX + maclen + 2 * pLen, &indexBE, sizeof(indexBE));
+	memcpy(CTX + maclen + 2 * p_length, &indexBE, sizeof(indexBE));
 	/* NOTE: we discard nWritten and use all bytes regardless for CTX */
 	unsigned char K[maclen];
 	memset(K, 0, maclen);
@@ -222,7 +222,7 @@ int dhFinal(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf,
 		/* compute next chunk and copy */
 		index++;
 		indexBE = htobe64(index);
-		memcpy(CTX + maclen + 2 * pLen, &indexBE, sizeof(indexBE));
+		memcpy(CTX + maclen + 2 * p_length, &indexBE, sizeof(indexBE));
 		memcpy(CTX, K, maclen);
 		HMAC(EVP_sha512(), PRK, maclen, CTX, ctxlen, K, 0);
 		copylen = (bytesLeft < maclen) ? bytesLeft : maclen;
@@ -234,7 +234,7 @@ int dhFinal(mpz_t sk_mine, mpz_t pk_mine, mpz_t pk_yours, unsigned char *keybuf,
 	/* erase sensitive data: */
 	memset(CTX, 0, ctxlen);
 	memset(K, 0, maclen);
-	memset(SK, 0, pLen);
+	memset(SK, 0, p_length);
 	memset(PRK, 0, maclen);
 	return 0;
 }
