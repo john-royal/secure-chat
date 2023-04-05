@@ -61,6 +61,36 @@ int listen_socket, socket_fd;
 	fail_exit("");
 }
 
+void init_chat_session()
+{
+	// generate Diffie-Hellman public key and private key
+	printf("Generating Diffie-Hellman session keys...\n");
+	dh_load_params_from_file("params");
+	NEWZ(a); /* secret key (a random exponent) */
+	NEWZ(A); /* public key: A = g^a mod p */
+	dh_generate_key_pair(a, A);
+
+	// send public key to other party
+	string dh_public_key_string = mpz_get_str(NULL, 10, A);
+	send(socket_fd, dh_public_key_string.c_str(), dh_public_key_string.length(), 0);
+
+	// receive public key from other party
+	mpz_t B;
+	size_t maxlen = 1000;
+	char msg[1000];
+	ssize_t received = recv(socket_fd, msg, maxlen, 0);
+	mpz_init_set_str(B, msg, 10);
+
+	// compute shared Diffie-Hellman secret
+	printf("Computing shared Diffie-Hellman secret...\n");
+	size_t KEY_LENGTH = 128;
+	unsigned char shared_secret[KEY_LENGTH];
+	dh_compute_shared_secret(a, A, B, shared_secret, KEY_LENGTH);
+
+	printf("%s\n", shared_secret);
+	exit(0);
+}
+
 int init_server_network(int port)
 {
 	int reuse = 1;
@@ -86,6 +116,9 @@ int init_server_network(int port)
 	close(listen_socket);
 	fprintf(stderr, "connection made, starting session...\n");
 	/* at this point, should be able to send/recv on socket_fd */
+
+	init_chat_session();
+
 	return 0;
 }
 
@@ -109,6 +142,9 @@ static int init_client_network(char *hostname, int port)
 	if (connect(socket_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
 		perror_fail_exit("ERROR connecting");
 	/* at this point, should be able to send/recv on socket_fd */
+
+	init_chat_session();
+
 	return 0;
 }
 
