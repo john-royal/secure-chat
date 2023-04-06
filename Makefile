@@ -34,7 +34,7 @@ debug : all
 .PHONY : debug
 # }}}
 
-chat : $(IMPL) dh.o
+chat : $(IMPL) dh.o crypto.o
 	$(LD) $(LDFLAGS) -o $@ $^ $(LDADD)
 
 dh-example : dh-example.o dh.o

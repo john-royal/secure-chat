@@ -21,6 +21,7 @@ using std::deque;
 #include <utility>
 using std::pair;
 #include "dh.h"
+#include "crypto.h"
 
 static pthread_t thread_receive_message; /* wait for incoming messagess and post to queue */
 void *receive_message(void *);			 /* for thread_receive_message */
@@ -61,6 +62,52 @@ int listen_socket, socket_fd;
 	fail_exit("");
 }
 
+struct ChatClient
+{
+	string aes_key;
+	string aes_iv;
+
+	ChatClient(string aes_key, string aes_iv) : aes_key(aes_key), aes_iv(aes_iv) {}
+
+	string encrypt(string message)
+	{
+		return aes_encrypt(aes_key, aes_iv, message);
+	}
+
+	string decrypt(string message)
+	{
+		return aes_decrypt(aes_key, aes_iv, message);
+	}
+
+	ssize_t send(string message)
+	{
+		return ::send(socket_fd, message.c_str(), message.length(), 0);
+	}
+
+	ssize_t send_encrypted(string message)
+	{
+		return send(encrypt(message));
+	}
+
+	string receive()
+	{
+		size_t MAX_LENGTH = 2048;
+		char msg[MAX_LENGTH + 1];
+		ssize_t received = recv(socket_fd, msg, MAX_LENGTH, 0);
+		if (received < 0)
+			perror_fail_exit("ERROR reading from socket");
+		msg[received] = '\0';
+		return string(msg, received);
+	}
+
+	string receive_decrypted()
+	{
+		return decrypt(receive());
+	}
+};
+
+ChatClient *chat_client;
+
 void init_chat_session()
 {
 	// generate Diffie-Hellman public key and private key
@@ -72,14 +119,12 @@ void init_chat_session()
 
 	// send public key to other party
 	string dh_public_key_string = mpz_get_str(NULL, 10, A);
-	send(socket_fd, dh_public_key_string.c_str(), dh_public_key_string.length(), 0);
+	chat_client->send(dh_public_key_string);
 
 	// receive public key from other party
 	mpz_t B;
-	size_t maxlen = 1000;
-	char msg[1000];
-	ssize_t received = recv(socket_fd, msg, maxlen, 0);
-	mpz_init_set_str(B, msg, 10);
+	string other_dh_public_key_string = chat_client->receive();
+	mpz_init_set_str(B, other_dh_public_key_string.c_str(), 10);
 
 	// compute shared Diffie-Hellman secret
 	printf("Computing shared Diffie-Hellman secret...\n");
@@ -87,8 +132,16 @@ void init_chat_session()
 	unsigned char shared_secret[KEY_LENGTH];
 	dh_compute_shared_secret(a, A, B, shared_secret, KEY_LENGTH);
 
-	printf("%s\n", shared_secret);
-	exit(0);
+	// derive AES key and IV from shared secret
+	printf("Deriving AES key and IV from shared secret...\n");
+	AESKeys aes_keys = derive_aes_keys(shared_secret, KEY_LENGTH);
+
+	// configure chat client
+	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv);
+
+	// test
+	chat_client->send_encrypted("Hello, world!");
+	printf("Received encrypted message: %s\n", chat_client->receive_decrypted().c_str());
 }
 
 int init_server_network(int port)
@@ -231,8 +284,7 @@ static void readline_message_input_handler(char *line)
 			add_history(line);
 			mymsg = string(line);
 			transcript.push_back("me: " + mymsg);
-			ssize_t nbytes;
-			if ((nbytes = send(socket_fd, line, mymsg.length(), 0)) == -1)
+			if (chat_client->send_encrypted(mymsg) == -1)
 				perror_fail_exit("send failed");
 		}
 		pthread_mutex_lock(&message_queue_mutex);
@@ -539,22 +591,17 @@ void *curses_thread_manager(void *pData)
 
 void *receive_message(void *)
 {
-	size_t maxlen = 256;
-	char msg[maxlen + 1];
-	ssize_t nbytes;
 	while (1)
 	{
-		if ((nbytes = recv(socket_fd, msg, maxlen, 0)) == -1)
-			perror_fail_exit("recv failed");
-		msg[nbytes] = 0; /* make sure it is null-terminated */
-		if (nbytes == 0)
+		string message = chat_client->receive_decrypted();
+		if (message.empty())
 		{
 			/* signal to the main loop that we should quit: */
 			should_exit = true;
 			return 0;
 		}
 		pthread_mutex_lock(&message_queue_mutex);
-		message_queue.push_back({false, msg, "Mr Thread", msg_win});
+		message_queue.push_back({false, message, "Mr Thread", msg_win});
 		pthread_cond_signal(&message_queue_cond);
 		pthread_mutex_unlock(&message_queue_mutex);
 	}
