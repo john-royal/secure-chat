@@ -22,6 +22,10 @@ using std::deque;
 using std::pair;
 #include "dh.h"
 #include "crypto.h"
+#include <iostream>
+using namespace std;
+
+string username;
 
 static pthread_t thread_receive_message; /* wait for incoming messagess and post to queue */
 void *receive_message(void *);			 /* for thread_receive_message */
@@ -283,8 +287,8 @@ static void readline_message_input_handler(char *line)
 		{
 			add_history(line);
 			mymsg = string(line);
-			transcript.push_back("me: " + mymsg);
-			if (chat_client->send_encrypted(mymsg) == -1)
+			transcript.push_back(username + ": " + mymsg);
+			if (chat_client->send_encrypted(username + ": " + mymsg) == -1)
 				perror_fail_exit("send failed");
 		}
 		pthread_mutex_lock(&message_queue_mutex);
@@ -491,6 +495,10 @@ int main(int argc, char *argv[])
 		init_server_network(port);
 	}
 
+	// ask for name
+	printf("Enter your name: ");
+	cin >> username;
+
 	/* NOTE: these don't work if called from curses_thread_manager */
 	init_ncurses();
 	init_readline();
@@ -600,8 +608,12 @@ void *receive_message(void *)
 			should_exit = true;
 			return 0;
 		}
+		size_t pos = message.find(": ");
+		string username = message.substr(0, pos);
+		message = message.substr(pos + 2);
+
 		pthread_mutex_lock(&message_queue_mutex);
-		message_queue.push_back({false, message, "Mr Thread", msg_win});
+		message_queue.push_back({false, message, username, msg_win});
 		pthread_cond_signal(&message_queue_cond);
 		pthread_mutex_unlock(&message_queue_mutex);
 	}
