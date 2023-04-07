@@ -1,4 +1,7 @@
 #include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <stdio.h>
 #include <stdexcept>
 #include <string>
 
@@ -6,18 +9,21 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
+#include <openssl/hmac.h>
+#include <openssl/pem.h>
 #include <openssl/sha.h>
 
 #include "crypto.h"
 
 using namespace std;
 
-AESKeys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_secret_length)
+Keys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_secret_length)
 {
-    AESKeys keys;
+    Keys keys;
     const int AES_KEY_SIZE = 32; // 256 bits
     const int AES_IV_SIZE = 16;  // 128 bits
-    const int KEY_MATERIAL_SIZE = AES_KEY_SIZE + AES_IV_SIZE;
+    const int HMAC_KEY_SIZE = 32; // 256 bits
+    const int KEY_MATERIAL_SIZE = AES_KEY_SIZE + AES_IV_SIZE + HMAC_KEY_SIZE;
     unsigned char key_material[KEY_MATERIAL_SIZE];
 
     // Create a new HKDF context
@@ -75,6 +81,7 @@ AESKeys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_
     // Populate the AESKeys structure
     keys.aes_key = string(reinterpret_cast<char *>(key_material), AES_KEY_SIZE);
     keys.aes_iv = string(reinterpret_cast<char *>(key_material + AES_KEY_SIZE), AES_IV_SIZE);
+    keys.hmac_key = string(reinterpret_cast<char *>(key_material + AES_KEY_SIZE + AES_IV_SIZE), HMAC_KEY_SIZE);
 
     return keys;
 }
@@ -117,4 +124,21 @@ string aes_decrypt(const string &key, const string &iv, const string &text)
     EVP_CIPHER_CTX_free(ctx);
 
     return string(reinterpret_cast<char *>(outbuf), out_len1 + out_len2);
+}
+
+string make_hmac(const string &key, const string &text)
+{
+    unsigned char mac[64];
+    memset(mac, 0, 64);
+
+    HMAC(EVP_sha512(), key.c_str(), key.size(), reinterpret_cast<const unsigned char *>(text.c_str()),
+         text.size(), mac, nullptr);
+
+    stringstream hmac_str;
+    for (size_t i = 0; i < 64; i++)
+    {
+        hmac_str << hex << setw(2) << setfill('0') << static_cast<int>(mac[i]);
+    }
+
+    return hmac_str.str();
 }

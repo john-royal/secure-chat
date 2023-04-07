@@ -70,8 +70,9 @@ struct ChatClient
 {
 	string aes_key;
 	string aes_iv;
+	string hmac_key;
 
-	ChatClient(string aes_key, string aes_iv) : aes_key(aes_key), aes_iv(aes_iv) {}
+	ChatClient(string aes_key, string aes_iv, string hmac_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key) {}
 
 	string encrypt(string message)
 	{
@@ -90,7 +91,7 @@ struct ChatClient
 
 	ssize_t send_encrypted(string message)
 	{
-		return send(encrypt(message));
+		return send(encrypt(message) + "," + make_hmac(hmac_key, message));
 	}
 
 	string receive()
@@ -106,7 +107,13 @@ struct ChatClient
 
 	string receive_decrypted()
 	{
-		return decrypt(receive());
+		string message = receive();
+		string text = message.substr(0, message.find_last_of(','));
+		string decrypted_text = decrypt(text);
+		string hmac = message.substr(message.find_last_of(',') + 1);
+		if (hmac != make_hmac(hmac_key, decrypted_text))
+			fail_exit("HMAC mismatch");
+		return decrypted_text;
 	}
 };
 
@@ -138,10 +145,10 @@ void init_chat_session()
 
 	// derive AES key and IV from shared secret
 	printf("Deriving AES key and IV from shared secret...\n");
-	AESKeys aes_keys = derive_aes_keys(shared_secret, KEY_LENGTH);
+	Keys aes_keys = derive_aes_keys(shared_secret, KEY_LENGTH);
 
 	// configure chat client
-	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv);
+	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key);
 
 	// test
 	chat_client->send_encrypted("Hello, world!");
