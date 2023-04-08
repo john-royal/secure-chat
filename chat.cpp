@@ -89,9 +89,11 @@ struct ChatClient
 		return ::send(socket_fd, message.c_str(), message.length(), 0);
 	}
 
-	ssize_t send_encrypted(string message)
+	ssize_t send_secure(string message)
 	{
-		return send(encrypt(message) + "," + make_hmac(hmac_key, message));
+		string encrypted_content = encrypt(message);
+		string hmac = hmac_sha512(hmac_key, message);
+		return send(encrypted_content + ',' + hmac);
 	}
 
 	string receive()
@@ -105,15 +107,19 @@ struct ChatClient
 		return string(msg, received);
 	}
 
-	string receive_decrypted()
+	string receive_secure()
 	{
-		string message = receive();
-		string text = message.substr(0, message.find_last_of(','));
-		string decrypted_text = decrypt(text);
-		string hmac = message.substr(message.find_last_of(',') + 1);
-		if (hmac != make_hmac(hmac_key, decrypted_text))
+		string received = receive();
+
+		string encrypted_content = received.substr(0, received.find_last_of(','));
+		string content = decrypt(encrypted_content);
+
+		string hmac = received.substr(received.find_last_of(',') + 1);
+
+		if (hmac != hmac_sha512(hmac_key, content))
 			fail_exit("HMAC mismatch");
-		return decrypted_text;
+
+		return content;
 	}
 };
 
@@ -151,8 +157,8 @@ void init_chat_session()
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key);
 
 	// test
-	chat_client->send_encrypted("Hello, world!");
-	printf("Received encrypted message: %s\n", chat_client->receive_decrypted().c_str());
+	chat_client->send_secure("Hello, world!");
+	printf("Received encrypted message: %s\n", chat_client->receive_secure().c_str());
 }
 
 int init_server_network(int port)
@@ -295,7 +301,7 @@ static void readline_message_input_handler(char *line)
 			add_history(line);
 			mymsg = string(line);
 			transcript.push_back(username + ": " + mymsg);
-			if (chat_client->send_encrypted(username + ": " + mymsg) == -1)
+			if (chat_client->send_secure(username + ": " + mymsg) == -1)
 				perror_fail_exit("send failed");
 		}
 		pthread_mutex_lock(&message_queue_mutex);
@@ -608,7 +614,7 @@ void *receive_message(void *)
 {
 	while (1)
 	{
-		string message = chat_client->receive_decrypted();
+		string message = chat_client->receive_secure();
 		if (message.empty())
 		{
 			/* signal to the main loop that we should quit: */

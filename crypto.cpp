@@ -126,7 +126,7 @@ string aes_decrypt(const string &key, const string &iv, const string &text)
     return string(reinterpret_cast<char *>(outbuf), out_len1 + out_len2);
 }
 
-string make_hmac(const string &key, const string &text)
+string hmac_sha512(const string &key, const string &text)
 {
     unsigned char mac[64];
     memset(mac, 0, 64);

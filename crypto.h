@@ -16,6 +16,6 @@ Keys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_sec
 string aes_encrypt(const string &key, const string &iv, const string &text);
 string aes_decrypt(const string &key, const string &iv, const string &text);
 
-string make_hmac(const string &key, const string &text);
+string hmac_sha512(const string &key, const string &text);
 
 #endif
