@@ -71,8 +71,9 @@ struct ChatClient
 	string aes_key;
 	string aes_iv;
 	string hmac_key;
+	RSA* my_rsa_key;
 
-	ChatClient(string aes_key, string aes_iv, string hmac_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key) {}
+	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA* my_rsa_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_key(my_rsa_key) {}
 
 	string encrypt(string message)
 	{
@@ -93,7 +94,8 @@ struct ChatClient
 	{
 		string encrypted_content = encrypt(message);
 		string hmac = hmac_sha512(hmac_key, message);
-		return send(encrypted_content + ',' + hmac);
+		string hmac_encrypted = rsa_public_encrypt(my_rsa_key, hmac);
+		return send(encrypted_content + ',' + hmac_encrypted);
 	}
 
 	string receive()
@@ -114,7 +116,8 @@ struct ChatClient
 		string encrypted_content = received.substr(0, received.find_last_of(','));
 		string content = decrypt(encrypted_content);
 
-		string hmac = received.substr(received.find_last_of(',') + 1);
+		string hmac_encrypted = received.substr(received.find_last_of(',') + 1);
+		string hmac = rsa_private_decrypt(my_rsa_key, hmac_encrypted);
 
 		if (hmac != hmac_sha512(hmac_key, content))
 			fail_exit("HMAC mismatch");
@@ -153,8 +156,12 @@ void init_chat_session()
 	printf("Deriving AES key and IV from shared secret...\n");
 	Keys aes_keys = derive_aes_keys(shared_secret, KEY_LENGTH);
 
+	// generate RSA keypair
+	printf("Generating RSA key...\n");
+	RSA* my_rsa_key = rsa_generate_key();
+
 	// configure chat client
-	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key);
+	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_key);
 
 	// test
 	chat_client->send_secure("Hello, world!");

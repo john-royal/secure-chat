@@ -20,8 +20,8 @@ using namespace std;
 Keys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_secret_length)
 {
     Keys keys;
-    const int AES_KEY_SIZE = 32; // 256 bits
-    const int AES_IV_SIZE = 16;  // 128 bits
+    const int AES_KEY_SIZE = 32;  // 256 bits
+    const int AES_IV_SIZE = 16;   // 128 bits
     const int HMAC_KEY_SIZE = 32; // 256 bits
     const int KEY_MATERIAL_SIZE = AES_KEY_SIZE + AES_IV_SIZE + HMAC_KEY_SIZE;
     unsigned char key_material[KEY_MATERIAL_SIZE];
@@ -141,4 +141,43 @@ string hmac_sha512(const string &key, const string &text)
     }
 
     return hmac_str.str();
+}
+
+RSA *rsa_generate_key()
+{
+    return RSA_generate_key(2048, RSA_F4, nullptr, nullptr);
+}
+
+string rsa_public_encrypt(RSA *public_key, const string &text)
+{
+    int max_size = RSA_size(public_key);
+    unsigned char encrypted[max_size];
+
+    int encrypted_length = RSA_public_encrypt(text.size(),
+                                              reinterpret_cast<const unsigned char *>(text.c_str()),
+                                              encrypted,
+                                              public_key,
+                                              RSA_PKCS1_PADDING);
+
+    if (encrypted_length == -1)
+        throw runtime_error("RSA public key encryption failed");
+
+    return string(reinterpret_cast<char *>(encrypted), encrypted_length);
+}
+
+string rsa_private_decrypt(RSA *private_key, const string &text)
+{
+    int max_size = max(RSA_size(private_key), (int)text.size());
+    unsigned char decrypted[max_size];
+
+    int decrypted_length = RSA_private_decrypt(text.size(),
+                                               reinterpret_cast<const unsigned char *>(text.c_str()),
+                                               decrypted,
+                                               private_key,
+                                               RSA_PKCS1_PADDING);
+
+    if (decrypted_length == -1)
+        throw runtime_error("RSA private key decryption failed");
+
+    return string(reinterpret_cast<char *>(decrypted), decrypted_length);
 }
