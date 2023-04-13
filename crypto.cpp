@@ -165,6 +165,40 @@ string rsa_public_encrypt(RSA *public_key, const string &text)
     return string(reinterpret_cast<char *>(encrypted), encrypted_length);
 }
 
+string rsa_private_encrypt(RSA *private_key, const string &text)
+{
+    int max_size = RSA_size(private_key);
+    unsigned char encrypted[max_size];
+
+    int encrypted_length = RSA_private_encrypt(text.size(),
+                                               reinterpret_cast<const unsigned char *>(text.c_str()),
+                                               encrypted,
+                                               private_key,
+                                               RSA_PKCS1_PADDING);
+
+    if (encrypted_length == -1)
+        throw runtime_error("RSA private key encryption failed");
+
+    return string(reinterpret_cast<char *>(encrypted), encrypted_length);
+}
+
+string rsa_public_decrypt(RSA *public_key, const string &text)
+{
+    int max_size = max(RSA_size(public_key), (int)text.size());
+    unsigned char decrypted[max_size];
+
+    int decrypted_length = RSA_public_decrypt(text.size(),
+                                              reinterpret_cast<const unsigned char *>(text.c_str()),
+                                              decrypted,
+                                              public_key,
+                                              RSA_PKCS1_PADDING);
+
+    if (decrypted_length == -1)
+        throw runtime_error("RSA public key decryption failed");
+
+    return string(reinterpret_cast<char *>(decrypted), decrypted_length);
+}
+
 string rsa_private_decrypt(RSA *private_key, const string &text)
 {
     int max_size = max(RSA_size(private_key), (int)text.size());
@@ -180,4 +214,37 @@ string rsa_private_decrypt(RSA *private_key, const string &text)
         throw runtime_error("RSA private key decryption failed");
 
     return string(reinterpret_cast<char *>(decrypted), decrypted_length);
+}
+
+string rsa_public_key_to_string(RSA *public_key)
+{
+    BIO *bio = BIO_new(BIO_s_mem());
+
+    if (!PEM_write_bio_RSA_PUBKEY(bio, public_key))
+    {
+        BIO_free(bio);
+        throw runtime_error("Failed to write RSA public key to BIO");
+    }
+
+    BUF_MEM *mem = nullptr;
+    BIO_get_mem_ptr(bio, &mem);
+    string public_key_str(mem->data, mem->length);
+
+    BIO_free(bio);
+    return public_key_str;
+}
+
+RSA *rsa_public_key_from_string(const string &public_key_string)
+{
+    BIO *bio = BIO_new_mem_buf(public_key_string.c_str(), -1);
+
+    RSA *public_key = PEM_read_bio_RSA_PUBKEY(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+
+    if (public_key == nullptr)
+    {
+        throw runtime_error("Failed to read RSA public key from string");
+    }
+
+    return public_key;
 }

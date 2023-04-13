@@ -21,6 +21,10 @@ string hmac_sha512(const string &key, const string &text);
 
 RSA *rsa_generate_key();
 string rsa_public_encrypt(RSA *public_key, const string &text);
+string rsa_private_encrypt(RSA *private_key, const string &text);
+string rsa_public_decrypt(RSA *public_key, const string &text);
 string rsa_private_decrypt(RSA *private_key, const string &text);
+string rsa_public_key_to_string(RSA *public_key);
+RSA *rsa_public_key_from_string(const string &public_key_string);
 
 #endif

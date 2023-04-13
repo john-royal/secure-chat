@@ -71,9 +71,10 @@ struct ChatClient
 	string aes_key;
 	string aes_iv;
 	string hmac_key;
-	RSA* my_rsa_key;
+	RSA* my_rsa_keys;
+	RSA* their_rsa_public_key;
 
-	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA* my_rsa_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_key(my_rsa_key) {}
+	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA* my_rsa_key, RSA* their_rsa_public_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_keys(my_rsa_key), their_rsa_public_key(their_rsa_public_key) {}
 
 	string encrypt(string message)
 	{
@@ -94,8 +95,8 @@ struct ChatClient
 	{
 		string encrypted_content = encrypt(message);
 		string hmac = hmac_sha512(hmac_key, message);
-		string hmac_encrypted = rsa_public_encrypt(my_rsa_key, hmac);
-		return send(encrypted_content + ',' + hmac_encrypted);
+		string hmac_encrypted = rsa_private_encrypt(my_rsa_keys, hmac);
+		return send(encrypted_content + ';' + hmac_encrypted);
 	}
 
 	string receive()
@@ -113,11 +114,11 @@ struct ChatClient
 	{
 		string received = receive();
 
-		string encrypted_content = received.substr(0, received.find_last_of(','));
+		string encrypted_content = received.substr(0, received.find_last_of(';'));
 		string content = decrypt(encrypted_content);
 
-		string hmac_encrypted = received.substr(received.find_last_of(',') + 1);
-		string hmac = rsa_private_decrypt(my_rsa_key, hmac_encrypted);
+		string hmac_encrypted = received.substr(received.find_last_of(';') + 1);
+		string hmac = rsa_public_decrypt(their_rsa_public_key, hmac_encrypted);
 
 		if (hmac != hmac_sha512(hmac_key, content))
 			fail_exit("HMAC mismatch");
@@ -158,13 +159,27 @@ void init_chat_session()
 
 	// generate RSA keypair
 	printf("Generating RSA key...\n");
-	RSA* my_rsa_key = rsa_generate_key();
+	RSA* my_rsa_keys = rsa_generate_key();
+
+	// exchange RSA public keys
+	printf("Exchanging RSA public keys...\n");
+	string my_rsa_public_key_string = rsa_public_key_to_string(my_rsa_keys);
+	chat_client->send(my_rsa_public_key_string);
+	printf("Waiting for other party's RSA public key...\n");
+	string their_rsa_public_key_string = chat_client->receive();
+	printf("Received other party's RSA public key.\n");
+	RSA* their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
+	printf("Their RSA public key: %s", their_rsa_public_key_string.c_str());
 
 	// configure chat client
-	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_key);
+	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
+
+	printf("Chat session initialized.\n");
 
 	// test
+	printf("Sending encrypted message...\n");
 	chat_client->send_secure("Hello, world!");
+	printf("Waiting for encrypted message...\n");
 	printf("Received encrypted message: %s\n", chat_client->receive_secure().c_str());
 }
 
