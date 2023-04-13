@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "dh.h": "c",
-        "stdexcept": "cpp"
+        "stdexcept": "cpp",
+        "*.tcc": "cpp"
     }
 }

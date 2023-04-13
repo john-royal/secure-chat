@@ -187,6 +187,9 @@ string rsa_public_decrypt(RSA *public_key, const string &text)
     int max_size = max(RSA_size(public_key), (int)text.size());
     unsigned char decrypted[max_size];
 
+    if (public_key == nullptr)
+        throw runtime_error("RSA public key is null");
+
     int decrypted_length = RSA_public_decrypt(text.size(),
                                               reinterpret_cast<const unsigned char *>(text.c_str()),
                                               decrypted,

@@ -71,10 +71,10 @@ struct ChatClient
 	string aes_key;
 	string aes_iv;
 	string hmac_key;
-	RSA* my_rsa_keys;
-	RSA* their_rsa_public_key;
+	RSA *my_rsa_keys;
+	RSA *their_rsa_public_key;
 
-	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA* my_rsa_key, RSA* their_rsa_public_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_keys(my_rsa_key), their_rsa_public_key(their_rsa_public_key) {}
+	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA *my_rsa_key, RSA *their_rsa_public_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_keys(my_rsa_key), their_rsa_public_key(their_rsa_public_key) {}
 
 	string encrypt(string message)
 	{
@@ -88,7 +88,13 @@ struct ChatClient
 
 	ssize_t send(string message)
 	{
-		return ::send(socket_fd, message.c_str(), message.length(), 0);
+		size_t length = message.length();
+		uint32_t message_size_nbo = htonl(length);
+		if (-1 == ::send(socket_fd, &message_size_nbo, sizeof(message_size_nbo), 0))
+		{
+			return -1;
+		}
+		return ::send(socket_fd, message.c_str(), length, 0);
 	}
 
 	ssize_t send_secure(string message)
@@ -96,28 +102,43 @@ struct ChatClient
 		string encrypted_content = encrypt(message);
 		string hmac = hmac_sha512(hmac_key, message);
 		string hmac_encrypted = rsa_private_encrypt(my_rsa_keys, hmac);
-		return send(encrypted_content + ';' + hmac_encrypted);
+		return send(encrypted_content + ',' + hmac_encrypted);
 	}
 
 	string receive()
 	{
-		size_t MAX_LENGTH = 2048;
-		char msg[MAX_LENGTH + 1];
-		ssize_t received = recv(socket_fd, msg, MAX_LENGTH, 0);
-		if (received < 0)
-			perror_fail_exit("ERROR reading from socket");
-		msg[received] = '\0';
-		return string(msg, received);
+		uint32_t message_size_nbo;
+		ssize_t bytes_received = recv(socket_fd, &message_size_nbo, sizeof(message_size_nbo), 0);
+		if (-1 == bytes_received)
+		{
+			perror("recv");
+			return "";
+		}
+		uint32_t message_size = ntohl(message_size_nbo);
+		char buffer[message_size];
+		bytes_received = 0;
+		while (bytes_received < message_size)
+		{
+			ssize_t bytes_received_now = recv(socket_fd, buffer + bytes_received, message_size - bytes_received, 0);
+			if (-1 == bytes_received_now)
+			{
+				perror("recv");
+				return "";
+			}
+			bytes_received += bytes_received_now;
+		}
+		// buffer[bytes_received] = '\0';
+		return string(reinterpret_cast<char *>(buffer), message_size);
 	}
 
 	string receive_secure()
 	{
 		string received = receive();
 
-		string encrypted_content = received.substr(0, received.find_last_of(';'));
+		string encrypted_content = received.substr(0, received.find(','));
 		string content = decrypt(encrypted_content);
 
-		string hmac_encrypted = received.substr(received.find_last_of(';') + 1);
+		string hmac_encrypted = received.substr(received.find(',') + 1);
 		string hmac = rsa_public_decrypt(their_rsa_public_key, hmac_encrypted);
 
 		if (hmac != hmac_sha512(hmac_key, content))
@@ -159,22 +180,20 @@ void init_chat_session()
 
 	// generate RSA keypair
 	printf("Generating RSA key...\n");
-	RSA* my_rsa_keys = rsa_generate_key();
+	RSA *my_rsa_keys = rsa_generate_key();
 
 	// exchange RSA public keys
 	printf("Exchanging RSA public keys...\n");
 	string my_rsa_public_key_string = rsa_public_key_to_string(my_rsa_keys);
 	chat_client->send(my_rsa_public_key_string);
-	printf("Waiting for other party's RSA public key...\n");
 	string their_rsa_public_key_string = chat_client->receive();
-	printf("Received other party's RSA public key.\n");
-	RSA* their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
-	printf("Their RSA public key: %s", their_rsa_public_key_string.c_str());
+	RSA *their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
 
 	// configure chat client
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
 
 	printf("Chat session initialized.\n");
+
 
 	// test
 	printf("Sending encrypted message...\n");
