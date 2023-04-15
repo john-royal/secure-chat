@@ -200,10 +200,11 @@ void init_chat_session()
 
 	// auth challenge
 	printf("Authenticating...\n");
-	string encrypted_challenge = rsa_public_encrypt(their_rsa_public_key, "challenge");
+	string unencrypted_challenge = random_string(10);
+	string encrypted_challenge = rsa_public_encrypt(their_rsa_public_key, unencrypted_challenge);
 	chat_client->send(encrypted_challenge);
 	string decrypted_challenge = rsa_private_decrypt(my_rsa_keys, chat_client->receive());
-	if (decrypted_challenge != "challenge")
+	if (decrypted_challenge != unencrypted_challenge)
 		fail_exit("Authentication failed");
 
 	printf("Chat session initialized.\n");

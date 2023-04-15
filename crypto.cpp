@@ -12,6 +12,7 @@
 #include <openssl/hmac.h>
 #include <openssl/pem.h>
 #include <openssl/sha.h>
+#include <openssl/rand.h>
 
 #include "crypto.h"
 
@@ -250,4 +251,30 @@ RSA *rsa_public_key_from_string(const string &public_key_string)
     }
 
     return public_key;
+}
+
+string random_string(size_t length)
+{
+    unsigned char *rand_bytes = (unsigned char *)malloc(length);
+    char *rand_string = (char *)malloc(length + 1);
+
+    // Generate random bytes
+    if (1 != RAND_bytes(rand_bytes, length))
+    {
+        // Failed to generate random bytes
+        free(rand_bytes);
+        free(rand_string);
+        return NULL;
+    }
+
+    // Convert random bytes to a random string
+    for (size_t i = 0; i < length; i++)
+    {
+        // Map each byte to a printable ASCII character (32 to 126)
+        rand_string[i] = 32 + (rand_bytes[i] % 95);
+    }
+    rand_string[length] = '\0';
+
+    free(rand_bytes);
+    return string(reinterpret_cast<char *>(rand_string), length);
 }
