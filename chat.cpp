@@ -192,14 +192,21 @@ void init_chat_session()
 	// configure chat client
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
 
-	printf("Chat session initialized.\n");
-
-
 	// test
 	printf("Sending encrypted message...\n");
 	chat_client->send_secure("Hello, world!");
 	printf("Waiting for encrypted message...\n");
 	printf("Received encrypted message: %s\n", chat_client->receive_secure().c_str());
+
+	// auth challenge
+	printf("Authenticating...\n");
+	string encrypted_challenge = rsa_public_encrypt(their_rsa_public_key, "challenge");
+	chat_client->send(encrypted_challenge);
+	string decrypted_challenge = rsa_private_decrypt(my_rsa_keys, chat_client->receive());
+	if (decrypted_challenge != "challenge")
+		fail_exit("Authentication failed");
+
+	printf("Chat session initialized.\n");
 }
 
 int init_server_network(int port)
