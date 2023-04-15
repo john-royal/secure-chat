@@ -97,12 +97,12 @@ struct ChatClient
 		return ::send(socket_fd, message.c_str(), length, 0);
 	}
 
-	ssize_t send_secure(string message)
+	ssize_t send_secure(string content)
 	{
-		string encrypted_content = encrypt(message);
-		string hmac = hmac_sha512(hmac_key, message);
+		string content_encrypted = encrypt(content);
+		string hmac = hmac_sha512(hmac_key, content);
 		string hmac_encrypted = rsa_private_encrypt(my_rsa_keys, hmac);
-		return send(encrypted_content + ',' + hmac_encrypted);
+		return send(content_encrypted + ";;;" + hmac_encrypted);
 	}
 
 	string receive()
@@ -134,11 +134,12 @@ struct ChatClient
 	string receive_secure()
 	{
 		string received = receive();
+		size_t separator = received.find(";;;");
 
-		string encrypted_content = received.substr(0, received.find(','));
-		string content = decrypt(encrypted_content);
+		string content_encrypted = received.substr(0, separator);
+		string content = decrypt(content_encrypted);
 
-		string hmac_encrypted = received.substr(received.find(',') + 1);
+		string hmac_encrypted = received.substr(separator + 3);
 		string hmac = rsa_public_decrypt(their_rsa_public_key, hmac_encrypted);
 
 		if (hmac != hmac_sha512(hmac_key, content))
@@ -198,16 +199,67 @@ void init_chat_session()
 	printf("Waiting for encrypted message...\n");
 	printf("Received encrypted message: %s\n", chat_client->receive_secure().c_str());
 
-	// auth challenge
-	printf("Authenticating...\n");
-	string unencrypted_challenge = random_string(10);
-	string encrypted_challenge = rsa_public_encrypt(their_rsa_public_key, unencrypted_challenge);
-	chat_client->send(encrypted_challenge);
-	string decrypted_challenge = rsa_private_decrypt(my_rsa_keys, chat_client->receive());
-	if (decrypted_challenge != unencrypted_challenge)
-		fail_exit("Authentication failed");
-
 	printf("Chat session initialized.\n");
+}
+
+void authenticate_other_party()
+{
+	printf("Authenticating other party... ");
+
+	// send encrypted challenge
+	string challenge = random_string(32);
+	string encrypted_challenge = rsa_public_encrypt(chat_client->their_rsa_public_key, challenge);
+	if (chat_client->send_secure(encrypted_challenge) < 0)
+	{
+		perror("Failed to send challenge message");
+		exit(1);
+	}
+
+	// receive decrypted response
+	string challenge_response = chat_client->receive_secure();
+
+	// send result
+	string challenge_result = challenge_response == challenge ? "pass" : "fail";
+	if (chat_client->send_secure(challenge_result) < 0)
+	{
+		perror_fail_exit("Failed to send challenge result");
+	}
+
+	if (challenge_result == "pass")
+	{
+		printf("success\n");
+	}
+	else
+	{
+		fail_exit("Failed to authenticate other party");
+	}
+}
+
+void authenticate_self()
+{
+	printf("Authenticating self... ");
+
+	// receive encrypted challenge
+	string encrypted_challenge = chat_client->receive_secure();
+
+	// send decrypted response
+	string challenge = rsa_private_decrypt(chat_client->my_rsa_keys, encrypted_challenge);
+	if (chat_client->send_secure(challenge) < 0)
+	{
+		perror_fail_exit("Failed to send challenge response");
+	}
+
+	// receive result
+	string challenge_result = chat_client->receive_secure();
+
+	if (challenge_result == "pass")
+	{
+		printf("success\n");
+	}
+	else
+	{
+		fail_exit("Challenge failed");
+	}
 }
 
 int init_server_network(int port)
@@ -233,10 +285,17 @@ int init_server_network(int port)
 	if (socket_fd < 0)
 		perror_fail_exit("error on accept");
 	close(listen_socket);
-	fprintf(stderr, "connection made, starting session...\n");
 	/* at this point, should be able to send/recv on socket_fd */
 
+	// exchange DH and RSA keys to set up the encrypted chat client
+	fprintf(stderr, "connection made, starting session...\n");
 	init_chat_session();
+
+	// perform mutual authentication (client first)
+	authenticate_other_party();
+	authenticate_self();
+
+	fprintf(stderr, "Mutual authentication successful, starting chat...\n");
 
 	return 0;
 }
@@ -262,7 +321,15 @@ static int init_client_network(char *hostname, int port)
 		perror_fail_exit("ERROR connecting");
 	/* at this point, should be able to send/recv on socket_fd */
 
+	// exchange DH and RSA keys to set up the encrypted chat client
+	fprintf(stderr, "Connected to server, initializing session...\n");
 	init_chat_session();
+
+	// perform mutual authentication (client first)
+	authenticate_self();
+	authenticate_other_party();
+
+	fprintf(stderr, "Mutual authentication successful, starting chat...\n");
 
 	return 0;
 }
