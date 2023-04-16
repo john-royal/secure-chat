@@ -190,6 +190,14 @@ void init_chat_session()
 	string their_rsa_public_key_string = chat_client->receive();
 	RSA *their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
 
+	// ask user to accept their RSA public key
+	printf("Their RSA public key:\n%s\n", their_rsa_public_key_string.c_str());
+	printf("Do you trust this key? [y/N] ");
+	string answer;
+	getline(cin, answer);
+	if (answer != "y" && answer != "Y")
+		fail_exit("RSA public key not trusted");
+
 	// configure chat client
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
 
