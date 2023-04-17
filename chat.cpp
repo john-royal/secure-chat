@@ -222,10 +222,12 @@ void init_chat_session()
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
 
 	// test
-	printf("Sending encrypted message...\n");
+	printf("Testing chat client...\n");
 	chat_client->send_secure("Hello, world!");
-	printf("Waiting for encrypted message...\n");
-	printf("Received encrypted message: %s\n", chat_client->receive_secure().c_str());
+	if (chat_client->receive_secure() != "Hello, world!")
+	{
+		fail_exit("Encrypted message test failed");
+	}
 
 	printf("Chat session initialized.\n");
 }
@@ -756,6 +758,7 @@ void *curses_thread_manager(void *pData)
 
 void *receive_message(void *)
 {
+	chat_client->send_secure(username + ": joined the chat.");
 	while (1)
 	{
 		string message = chat_client->receive_secure();
