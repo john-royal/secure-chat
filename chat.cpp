@@ -190,13 +190,33 @@ void init_chat_session()
 	string their_rsa_public_key_string = chat_client->receive();
 	RSA *their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
 
-	// ask user to accept their RSA public key
-	printf("Their RSA public key:\n%s\n", their_rsa_public_key_string.c_str());
-	printf("Do you trust this key? [y/N] ");
-	string answer;
-	getline(cin, answer);
-	if (answer != "y" && answer != "Y")
-		fail_exit("RSA public key not trusted");
+	// ask user to accept key fingerprint, using an SSH-like prompt
+	while (1)
+	{
+		printf("\nThe authenticity of the other user cannot be established.\n");
+		printf("RSA key fingerprint is %s.\n", rsa_public_key_fingerprint(their_rsa_public_key).c_str());
+		printf("Are you sure you want to continue connecting (y/n)? ");
+
+		char accept;
+		cin >> accept;
+
+		if (accept == 'y' || accept == 'Y')
+		{
+			chat_client->send("y");
+			break;
+		}
+		else if (accept == 'n' || accept == 'N')
+		{
+			chat_client->send("n");
+			fail_exit("Exiting...");
+		}
+	}
+
+	// wait for y from other user
+	if (chat_client->receive() != "y")
+	{
+		fail_exit("The other user did not accept your key fingerprint. Exiting...");
+	}
 
 	// configure chat client
 	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);

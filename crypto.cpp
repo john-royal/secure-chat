@@ -253,6 +253,28 @@ RSA *rsa_public_key_from_string(const string &public_key_string)
     return public_key;
 }
 
+string rsa_public_key_fingerprint(RSA *public_key)
+{
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+
+    // Convert RSA public key to byte array
+    unsigned char *public_key_bytes = nullptr;
+    int len = i2d_RSAPublicKey(public_key, &public_key_bytes);
+
+    // Compute SHA-256 fingerprint
+    SHA256(public_key_bytes, len, digest);
+    OPENSSL_free(public_key_bytes);
+
+    // Convert fingerprint to hexadecimal string
+    stringstream fingerprint;
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+    {
+        fingerprint << hex << setw(2) << setfill('0') << static_cast<int>(digest[i]);
+    }
+
+    return fingerprint.str();
+}
+
 string random_string(size_t length)
 {
     unsigned char *rand_bytes = (unsigned char *)malloc(length);

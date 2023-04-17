@@ -26,6 +26,7 @@ string rsa_public_decrypt(RSA *public_key, const string &text);
 string rsa_private_decrypt(RSA *private_key, const string &text);
 string rsa_public_key_to_string(RSA *public_key);
 RSA *rsa_public_key_from_string(const string &public_key_string);
+string rsa_public_key_fingerprint(RSA *public_key);
 
 string random_string(const size_t length);
 
