@@ -74,52 +74,48 @@ struct ChatClient
 	RSA *my_rsa_keys;
 	RSA *their_rsa_public_key;
 
+	const string DELIMITER = ";;;";
+
 	ChatClient(string aes_key, string aes_iv, string hmac_key, RSA *my_rsa_key, RSA *their_rsa_public_key) : aes_key(aes_key), aes_iv(aes_iv), hmac_key(hmac_key), my_rsa_keys(my_rsa_key), their_rsa_public_key(their_rsa_public_key) {}
-
-	string encrypt(string message)
-	{
-		return aes_encrypt(aes_key, aes_iv, message);
-	}
-
-	string decrypt(string message)
-	{
-		return aes_decrypt(aes_key, aes_iv, message);
-	}
 
 	ssize_t send(string message)
 	{
+		// send length of message as fixed-size integer
 		size_t length = message.length();
-		uint32_t message_size_nbo = htonl(length);
-		if (-1 == ::send(socket_fd, &message_size_nbo, sizeof(message_size_nbo), 0))
+		uint32_t length_nbo = htonl(length);
+		if (-1 == ::send(socket_fd, &length_nbo, sizeof(length_nbo), 0))
 		{
+			perror("send");
 			return -1;
 		}
+		// send message
 		return ::send(socket_fd, message.c_str(), length, 0);
 	}
 
-	ssize_t send_secure(string content)
+	ssize_t send_secure(string message)
 	{
-		string content_encrypted = encrypt(content);
-		string hmac = hmac_sha512(hmac_key, content);
+		string message_encrypted = aes_encrypt(aes_key, aes_iv, message);
+		string hmac = hmac_sha512(hmac_key, message);
 		string hmac_encrypted = rsa_private_encrypt(my_rsa_keys, hmac);
-		return send(content_encrypted + ";;;" + hmac_encrypted);
+		return send(message_encrypted + DELIMITER + hmac_encrypted);
 	}
 
 	string receive()
 	{
-		uint32_t message_size_nbo;
-		ssize_t bytes_received = recv(socket_fd, &message_size_nbo, sizeof(message_size_nbo), 0);
-		if (-1 == bytes_received)
+		// receive length of message as fixed-size integer
+		uint32_t length_nbo;
+		if (recv(socket_fd, &length_nbo, sizeof(length_nbo), 0) == -1)
 		{
 			perror("recv");
 			return "";
 		}
-		uint32_t message_size = ntohl(message_size_nbo);
-		char buffer[message_size];
-		bytes_received = 0;
-		while (bytes_received < message_size)
+		ssize_t length = ntohl(length_nbo);
+		// receive message, ensuring that the entire message is received
+		char buffer[length + 1];
+		ssize_t bytes_received = 0;
+		while (bytes_received < length)
 		{
-			ssize_t bytes_received_now = recv(socket_fd, buffer + bytes_received, message_size - bytes_received, 0);
+			ssize_t bytes_received_now = recv(socket_fd, buffer + bytes_received, length - bytes_received, 0);
 			if (-1 == bytes_received_now)
 			{
 				perror("recv");
@@ -127,25 +123,33 @@ struct ChatClient
 			}
 			bytes_received += bytes_received_now;
 		}
-		// buffer[bytes_received] = '\0';
-		return string(reinterpret_cast<char *>(buffer), message_size);
+		buffer[bytes_received] = '\0';
+		// return as string
+		return string(reinterpret_cast<char *>(buffer), length);
 	}
 
 	string receive_secure()
 	{
 		string received = receive();
-		size_t separator = received.find(";;;");
 
-		string content_encrypted = received.substr(0, separator);
-		string content = decrypt(content_encrypted);
+		if (received.empty())
+			return "";
+
+		size_t separator = received.find(DELIMITER);
+
+		if (separator == string::npos)
+			fail_exit("Received message without delimiter");
+
+		string message_encrypted = received.substr(0, separator);
+		string message = aes_decrypt(aes_key, aes_iv, message_encrypted);
 
 		string hmac_encrypted = received.substr(separator + 3);
 		string hmac = rsa_public_decrypt(their_rsa_public_key, hmac_encrypted);
 
-		if (hmac != hmac_sha512(hmac_key, content))
+		if (hmac != hmac_sha512(hmac_key, message))
 			fail_exit("HMAC mismatch");
 
-		return content;
+		return message;
 	}
 };
 
@@ -171,13 +175,13 @@ void init_chat_session()
 
 	// compute shared Diffie-Hellman secret
 	printf("Computing shared Diffie-Hellman secret...\n");
-	size_t KEY_LENGTH = 128;
-	unsigned char shared_secret[KEY_LENGTH];
-	dh_compute_shared_secret(a, A, B, shared_secret, KEY_LENGTH);
+	size_t DH_SECRET_LENGTH = 128;
+	unsigned char shared_secret[DH_SECRET_LENGTH];
+	dh_compute_shared_secret(a, A, B, shared_secret, DH_SECRET_LENGTH);
 
 	// derive AES key and IV from shared secret
 	printf("Deriving AES key and IV from shared secret...\n");
-	Keys aes_keys = derive_aes_keys(shared_secret, KEY_LENGTH);
+	SessionKeys session_keys = derive_session_keys(shared_secret, DH_SECRET_LENGTH);
 
 	// generate RSA keypair
 	printf("Generating RSA key...\n");
@@ -190,7 +194,7 @@ void init_chat_session()
 	string their_rsa_public_key_string = chat_client->receive();
 	RSA *their_rsa_public_key = rsa_public_key_from_string(their_rsa_public_key_string);
 
-	// ask user to accept key fingerprint, using an SSH-like prompt
+	// ask user to accept RSA key fingerprint, using an SSH-like prompt
 	while (1)
 	{
 		printf("\nThe authenticity of the other user cannot be established.\n");
@@ -219,7 +223,7 @@ void init_chat_session()
 	}
 
 	// configure chat client
-	chat_client = new ChatClient(aes_keys.aes_key, aes_keys.aes_iv, aes_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
+	chat_client = new ChatClient(session_keys.aes_key, session_keys.aes_iv, session_keys.hmac_key, my_rsa_keys, their_rsa_public_key);
 
 	// test
 	printf("Testing chat client...\n");
@@ -430,7 +434,7 @@ static void redisplay_message_window(bool batch, const string &newmsg = "", cons
 	}
 }
 
-static void readline_message_input_handler(char *line)
+static void handle_readline_input(char *line)
 {
 	string mymsg;
 	if (!line)
@@ -590,7 +594,7 @@ static void init_readline(void)
 	rl_getc_function = readline_getc;
 	rl_redisplay_function = readline_redisplay;
 
-	rl_callback_handler_install("> ", readline_message_input_handler);
+	rl_callback_handler_install("> ", handle_readline_input);
 }
 
 static void deinit_readline(void)

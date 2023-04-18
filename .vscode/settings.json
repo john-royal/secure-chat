@@ -2,6 +2,8 @@
     "files.associations": {
         "dh.h": "c",
         "stdexcept": "cpp",
-        "*.tcc": "cpp"
+        "*.tcc": "cpp",
+        "string": "cpp",
+        "iosfwd": "cpp"
     }
 }

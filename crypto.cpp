@@ -18,9 +18,9 @@
 
 using namespace std;
 
-Keys derive_aes_keys(const unsigned char *shared_secret, const size_t shared_secret_length)
+SessionKeys derive_session_keys(const unsigned char *shared_secret, const size_t shared_secret_length)
 {
-    Keys keys;
+    SessionKeys keys;
     const int AES_KEY_SIZE = 32;  // 256 bits
     const int AES_IV_SIZE = 16;   // 128 bits
     const int HMAC_KEY_SIZE = 32; // 256 bits
