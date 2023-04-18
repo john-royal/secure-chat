@@ -441,8 +441,8 @@ static void handle_readline_input(char *line)
 	{
 		// Ctrl-D pressed on empty line
 		should_exit = true;
-		/* XXX send a "goodbye" message so other end doesn't
-		 * have to wait for timeout on recv()? */
+		// send empty message to signal other party to exit
+		chat_client->send_secure("");
 	}
 	else
 	{
@@ -770,6 +770,7 @@ void *receive_message(void *)
 		{
 			/* signal to the main loop that we should quit: */
 			should_exit = true;
+			printf("Connection closed by peer.\n");
 			return 0;
 		}
 		size_t pos = message.find(": ");
