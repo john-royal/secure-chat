@@ -1,56 +1,38 @@
 # Secure Messaging Program
 
-This is a secure chat program created for CSC 38000 (Computer Security). Written in C and C++, the program includes the following security measure:
+This is a secure messaging program created using C/C++.
 
-- authentication of correspondents
-- message secrecy (encryption)
-- message integrity (HMACs)
-
-## Usage
-
-To run the program, use the Makefile to comp
-
-
-Use the Makefile to compile the program. Then, to run the program as a server, use the following command:
+Use the Makefile to compile the program. Then, use the following command to start the server:
 
 ```
-./chat
+./chat -l
 ```
 
-To run the program as a client, use the following command:
+To connect to the server, run the program in client mode:
 
 ```
-.chat -c
+./chat -c localhost
 ```
 
-## Authors
+## Assumptions
 
-This program was written by Sumya Raha, John Royal, and Joseph Nicholas.
+1. Non-Secure Network: The program assumes that the network has no built-in security and that messages may be intercepted in transit.
+2. Public Key Exchange: The program assumes that the parties have already exchanged public keys through a secure channel and that users are able to inspect and verify the public key fingerprint of the other party.
+3. Private Key Secrecy: The program assumes that neither party’s private key has been compromised and that both parties are following best practices, such as regular key rotation.
+4. Strong Encryption: The program assumes that the AES and RSA encryption standards, as well as the key lengths used, are sufficient for preventing brute-force attacks.
+5. Program Integrity: The program assumes that it has not been tampered with and that all built-in security mechanisms are present.
+6. Secure Dependencies: The program assumes that the device, operating system, and all third-party software dependencies are secure and have not been compromised.
+7. Adversary Resources: The program assumes that adversaries have access to the network and may attempt to perform brute-force, man-in-the-middle, spoofing, and other attacks.
 
-## Security
+## Claims
 
-### Assumptions
+1. Mutual Authentication: First, the user is asked to manually inspect and certify the RSA public key fingerprint of the other party. Then, the program uses a challenge-response mechanism to verify that the other party holds the corresponding RSA private key.
+2. Key Derivation with Perfect Forward Secrecy: The program performs a Diffie-Hellman key exchange to establish a shared secret from which the cryptographic keys for the session are derived. An HMAC-based key derivation function (HKDF) is used to expand the shared secret into three separate keys: a 256-bit AES encryption key, a 128-bit AES initialization vector, and a 256-bit HMAC key. By performing a Diffie-Hellman key exchange and using a secure key derivation function, the program generates cryptographic keys with perfect forward secrecy.
+3. Message Confidentiality: The program uses AES-256 encryption in CBC mode to ensure the secrecy of messages in transit. Because the encryption keys are derived from the Diffie-Hellman shared secret, only a party to the initial key exchange can successfully encrypt and decrypt messages.
+4. Message Integrity: The program uses digital signatures to ensure that messages have not been tampered with in transit and were sent by the claimed sender. The digital signature is a message authentication code generated using HMAC-SHA512 and encrypted using the sender’s RSA private key. To authenticate incoming messages, the recipient decrypts the message signature using the sender’s RSA public key, recomputes the message authentication code, and verifies that the decrypted HMAC matches the recomputed one.
 
-1. **Public Key Exchange:** When initiating the chat session, the program exchanges RSA public keys with the other party, and the user is prompted to accept the other party’s RSA public key fingerprint. As a result, it is assumed that the parties have already exchanged public keys over a secure channel before initiating the chat session.
-2. **Software and Hardware Integrity:** The program itself has not been tampered with and is running on a secure device. The program does not include defenses against a modified program or a compromised device. This is assumed for both communicating parties.
-3. **Non-Secure Network:** The program assumes that adversaries may have access to the transmitted encrypted messages and may attempt to perform a range of attacks, including man-in-the-middle and brute-force attacks.
+## Known Vulnerabilities
 
-### Security Claims
-
-Before initializing the chat session, the client and server perform a two-step handshake protocol to establish shared AES and HMAC keys for the session, as well as to authenticate each other. After this handshake, the parties can exchange messages securely using encryption and message signatures.
-
-1. **Key Exchange with Perfect Forward Secrecy:** The program uses Diffie-Hellman to securely derive a shared secret key with perfect forward secrecy (PFS). This shared secret is used to compute three so-called “session keys”: the AES encryption key, the AES initialization vector (IV), and the HMAC key. The AES key and initialization vector are used to encrypt and decrypt messages and the HMAC key is used to compute HMACs for message integrity.
-2. **Mutual Authentication:** After exchanging RSA public keys, the program uses a challenge-response mechanism to verify that the other party holds the corresponding RSA private key. Here is how this mechanism works:
-    1. The server generates a random string, encrypts it using the client’s RSA public key, and sends the encrypted string to the client.
-    2. The client decrypts the string using its RSA private key and sends the result back to the server.
-    3. The server verifies that the client’s decrypted string matches the original string. If they match, then the client is authenticated. Otherwise, the server terminates the chat session.
-    4. This procedure is repeated with the client generating a random string and the server decrypting it, thus accomplishing mutual authentication.
-3. **Message Secrecy:** Using the shared AES key and initialization vector, the program encrypts the message using AES in CBC mode. The AES key and initialization vector are derived from the shared secret key using SHA-256. The program uses a 256-bit key size and a 128-bit block size. The encrypted message is then sent to the recipient, who can decrypt the message only if they have the shared secret key.
-4. **Message Integrity:** To ensure message integrity, messages include a digital signature generated using a combination of HMAC-SHA256 and RSA private key encryption. The HMAC is computed from the unencrypted message using an HMAC key derived from the shared secret using SHA-256. The HMAC is then encrypted using the sender’s RSA private key and sent to the recipient along with the encrypted message. After decrypting the message contents using AES-256, the recipient decrypts the HMAC using the sender’s RSA public key and recomputes the HMAC from the decrypted message contents and HMAC key. If the re-computed HMAC matches the one received, this verifies that the message has not been tampered with and was sent by the claimed sender. Otherwise, the recipient terminates the chat session.
-
-### Known Vulnerabilities
-
-1. The program’s authentication mechanisms depend on the integrity of the RSA public key exchange. Although the program prompts each party to manually inspect the other party’s public key fingerprint, this assumes that the parties have already exchanged public keys through a secure channel. If an adversary tampers with the public key exchange, they can impersonate the other party by using their own RSA public key and fingerprint. In a real-world application, this would be mitigated using a public key infrastructure (PKI) and a trusted certificate authority (CA).
-2. Likewise, the program’s authentication mechanisms additionally assume that no RSA private keys have been compromised. If an RSA private key is compromised, an adversary may impersonate a party to the conversation by passing the challenge-response mechanism used for mutual authentication and generating valid signatures for their messages.
-3. If the Diffie-Hellman key exchange were to be compromised, the adversary would be able to derive the shared secret key and decrypt all messages sent during the session. However, the program’s authentication mechanisms should prevent them from impersonating another party.
-4. The program does not include defenses against a modified program or a compromised device. By modifying the program, an adversary could disable or bypass the encryption and authentication mechanisms. By compromising the device, an adversary could gain access to the RSA private key and shared secret key, thus compromising the confidentiality and integrity of the messages.
+1. The program terminates when unexpected inputs are received. This ensures the security of the application by rejecting messages that have not been encrypted and signed correctly. However, this also leaves the program extremely vulnerable to denial-of-service attacks.
+2. The program’s authentication mechanisms depend on the secrecy of each party’s private keys. If either party’s RSA private key is compromised, the party may be impersonated by an adversary.
+3. The program does not include any defenses specifically against replay attacks. These were deemed unnecessary because of the other security mechanisms in place.
